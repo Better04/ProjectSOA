@@ -1,0 +1,21 @@
+# Python 垃圾文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境 (千万别传)
+venv/
+.venv/
+env/
+
+# 环境变量与密钥 (安全起见，别传)
+.env
+instance/
+
+# 数据库文件
+*.sqlite3
+*.db
+
+# IDE 配置
+.idea/
+.vscode/
