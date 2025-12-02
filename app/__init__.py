@@ -32,6 +32,9 @@ def create_app(config_name='default'):
     # 4. 注册 CORS 扩展
     CORS(app, supports_credentials=True)
 
+    from app.modules.ai_analysis import ai_bp
+    app.register_blueprint(ai_bp)
+
     # 简单的测试路由
     @app.route('/')
     def index():
