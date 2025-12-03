@@ -13,7 +13,7 @@ class Config:
     # --- 数据库配置 (MySQL) ---
     # 确保你已经安装并启动了 MySQL 服务
     MYSQL_USER = os.environ.get('MYSQL_USER') or 'root'
-    MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD') or '123456'  # 🚨 替换为你自己的密码
+    MYSQL_PASSWORD = os.environ.get('MYSQL_PASSWORD') or 'root'  # 🚨 替换为你自己的密码
     MYSQL_HOST = os.environ.get('MYSQL_HOST') or 'localhost'
     MYSQL_PORT = os.environ.get('MYSQL_PORT') or '3306'
     MYSQL_DB = os.environ.get('MYSQL_DB') or 'wishlist_aggregator'  # 项目数据库名称

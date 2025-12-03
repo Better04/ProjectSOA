@@ -1,6 +1,7 @@
 # app/services/github_service.py
 
 import requests
+import os;
 import base64
 from .base_platform_service import BasePlatformService
 
@@ -10,7 +11,7 @@ GITHUB_API_BASE = "https://api.github.com"
 # 🚨🚨🚨 请在这里填入你申请的 GitHub Personal Access Token 🚨🚨🚨
 # 格式通常是 "ghp_" 开头的一长串字符
 # 如果留空，每小时只能请求 60 次；填入后可请求 5000 次。
-GITHUB_TOKEN = ""
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
 
 
 class GitHubService(BasePlatformService):
