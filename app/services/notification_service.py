@@ -49,10 +49,62 @@ def send_price_alert(user_id: int, item_title: str, current_price: float, target
 
         # 移除 server.starttls()，因为 SMTP_SSL 已经处理了 SSL/TLS 握手
 
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(SMTP_USER, [recipient], msg.as_string())
-        server.quit()
-        print(f"✅ 价格提醒邮件已发送给 {user.email}")
+        #server.login(SMTP_USER, SMTP_PASSWORD)
+        #server.sendmail(SMTP_USER, [recipient], msg.as_string())
+        #server.quit()
+        #print(f"✅ 价格提醒邮件已发送给 {user.email}")
     except Exception as e:
         print(f"❌ 邮件发送失败给 {user.email}: {e}")
         # 在实际项目中，这里需要记录日志或使用更健壮的队列服务
+
+def send_unlock_notification(user_id: int, item_title: str, item_url: str, condition_desc: str):
+    """
+    发送心愿解锁祝贺邮件
+    """
+    # 1. 获取配置
+    config = current_app.config
+    SMTP_SERVER = config.get('SMTP_SERVER')
+    SMTP_PORT = config.get('SMTP_PORT')
+    SMTP_USER = config.get('SMTP_USER')
+    SMTP_PASSWORD = config.get('SMTP_PASSWORD')
+
+    # 2. 获取用户
+    user = User.query.get(user_id)
+    if not user or not user.email:
+        print(f"Warning: User ID {user_id} not found or no email configured.")
+        return
+
+    # 3. 准备邮件内容
+    subject = f"恭喜！心愿【{item_title}】已解锁！"
+    body = f"""
+    亲爱的 {user.username}:
+
+    太棒了！检测到您的 GitHub 活跃度已达标：
+    【 {condition_desc} 】
+
+    您的心愿商品 **《{item_title}》** 已经解锁。
+    
+    现在您可以去清空购物车了：
+    {item_url}
+
+    ---
+    来自：DevLife 激励组
+    """
+
+    msg = MIMEText(body, 'plain', 'utf-8')
+    msg['Subject'] = subject
+    msg['From'] = SMTP_USER
+    msg['To'] = user.email
+
+    try:
+        # 使用 SSL 连接
+        server = smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
+        
+        
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.sendmail(SMTP_USER, [user.email], msg.as_string())
+        server.quit()
+        
+        print(f"✅ 解锁祝贺邮件已发送给 {user.email}")
+    except Exception as e:
+        print(f"❌ 邮件发送失败给 {user.email}: {e}")

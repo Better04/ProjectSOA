@@ -1,13 +1,15 @@
 from app.database import db
-from app.models import Item, Wish, PriceHistory
+from app.models import Item, Wish, PriceHistory, User
 from app.services.platform_router import get_service_by_url
-from sqlalchemy.exc import IntegrityError  # 用于处理数据库唯一性约束错误
+from sqlalchemy.exc import IntegrityError # 用于处理数据库唯一性约束错误
 
+from app.services.notification_service import send_unlock_notification
+from app.services.achievement_service import achievement_service
 
 class WishlistService:
 
     @staticmethod
-    def add_wish(user_id: int, url: str, target_price: float):
+    def add_wish(user_id: int, url: str, target_price: float, condition_type: str = None, target_value: int = 0):
         """
         添加一个新的心愿商品。
         如果商品已存在（相同的URL），则只创建新的 Wish 记录。
@@ -51,10 +53,16 @@ class WishlistService:
             if existing_wish:
                 return existing_wish, "该商品已存在于您的心愿单中"
 
+            # 如果没有设置条件(None)，默认为解锁(True)；否则为锁定(False)
+            is_unlocked_status = (condition_type is None)
+
             new_wish = Wish(
                 user_id=user_id,
                 item_id=item.id,
                 target_price=target_price,
+                is_unlocked=is_unlocked_status,
+                unlock_condition_type=condition_type,
+                unlock_target_value=target_value
             )
             db.session.add(new_wish)
             db.session.commit()
@@ -88,11 +96,9 @@ class WishlistService:
             latest_price = latest_price_record.price if latest_price_record else None
 
             # 🚨 核心修正：当 latest_price 不为 None 时才进行价格比较。
-            # 这确保了 0.00 可以参与比较，而 None 不行。
             if latest_price is not None and latest_price <= wish.target_price:
                 status = '低于目标'
             else:
-                # 价格缺失 (None) 或 价格高于目标价时，都显示“高于目标”
                 status = '高于目标'
 
             result.append({
@@ -104,7 +110,10 @@ class WishlistService:
                 'original_url': item.original_url,
                 'image_url': item.image_url,
                 'latest_price': latest_price,
-                'status': status
+                'status': status,
+                'is_unlocked': wish.is_unlocked,
+                'unlock_condition_type': wish.unlock_condition_type,
+                'unlock_target_value': wish.unlock_target_value
             })
         return result
 
@@ -118,3 +127,68 @@ class WishlistService:
             # 注意：这里我们不删除 Item 和 PriceHistory，因为其他用户可能也收藏了该 Item
             return True
         return False
+
+   
+    @staticmethod
+    def check_and_unlock_wishes(user_id: int):
+        """
+        核心功能：检查该用户的所有锁定心愿，如果达成 GitHub 目标则解锁
+        此方法供 API /refresh 路由调用
+        """
+        try:
+            # 1. 获取用户信息 (我们需要 GitHub 用户名)
+            user = User.query.get(user_id)
+            if not user or not user.username:
+                # 这里假设 user.username 存的是 GitHub 用户名
+                return False, "找不到用户或用户未绑定 GitHub"
+
+            github_username = user.username 
+
+            # 2. 查找该用户所有【未解锁】且【有条件】的心愿
+            # 注意：这里使用了 Wish 模型里新加的字段
+            locked_wishes = Wish.query.filter_by(
+                user_id=user_id, 
+                is_unlocked=False
+            ).filter(Wish.unlock_condition_type.isnot(None)).all()
+
+            if not locked_wishes:
+                return False, "当前没有需要解锁的心愿"
+
+            unlocked_count = 0
+            
+            # 3. 遍历检查
+            for wish in locked_wishes:
+                # 问裁判：达标了吗？
+                achieved = achievement_service.check_achievement(
+                    github_username,
+                    wish.unlock_condition_type,
+                    wish.unlock_target_value
+                )
+
+                if achieved:
+                    wish.is_unlocked = True
+                    unlocked_count += 1
+                    try:
+                        # 准备数据
+                        title = wish.item.title if wish.item else "神秘商品"
+                        url = wish.item.original_url if wish.item else ""
+                        condition_msg = f"{wish.unlock_condition_type} >= {wish.unlock_target_value}"
+                        
+                        # 发送解锁通知
+                        send_unlock_notification(user_id, title, url, condition_msg)
+                        
+                    except Exception as e:
+                        # 捕获错误，防止因为发邮件失败导致数据库回滚
+                        print(f"邮件发送非致命错误: {e}")
+
+            # 4. 提交更改
+            if unlocked_count > 0:
+                db.session.commit()
+                return True, f"恭喜！成功解锁了 {unlocked_count} 个心愿！"
+            
+            return False, "条件尚未达成，继续加油！"
+
+        except Exception as e:
+            db.session.rollback()
+            print(f"解锁检查失败: {e}")
+            return False, f"检查出错: {str(e)}"

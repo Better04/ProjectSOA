@@ -224,5 +224,56 @@ class GitHubService(BasePlatformService):
             print(f"获取语言数据失败: {e}")
             return {}
 
+
+    def get_total_stars(self, username: str) -> int:
+        """
+        计算该用户所有仓库获得的 Star 总数
+        """
+        # 复用你已经写好的 fetch_user_repos 方法
+        repos = self.fetch_user_repos(username)
+        total = 0
+        for repo in repos:
+            # 你的 fetch_user_repos 返回字典里 key 是 'stars'
+            total += repo.get('stars', 0)
+        return total
+
+    def get_user_weekly_commit_count(self, username: str) -> int:
+        """
+        获取用户过去 7 天内的总提交次数 (Push Events)
+        """
+        url = f"{GITHUB_API_BASE}/users/{username}/events"
+        headers = self._get_headers()
+        
+        try:
+            # 获取用户最近的公开动态
+            response = requests.get(url, headers=headers, params={'per_page': 100}, timeout=10)
+            response.raise_for_status()
+            events = response.json()
+            
+            commit_count = 0
+            from datetime import datetime, timedelta
+            
+            # 计算7天前的时间点
+            seven_days_ago = datetime.utcnow() - timedelta(days=7)
+            
+            for event in events:
+                # 1. 筛选类型：必须是推送代码 (PushEvent)
+                if event.get('type') == 'PushEvent':
+                    # 2. 筛选时间：必须是最近7天
+                    created_at_str = event.get('created_at') # 格式: 2023-10-01T12:00:00Z
+                    # 转化为 datetime 对象
+                    created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%SZ")
+                    
+                    if created_at > seven_days_ago:
+                        # 3. 累加提交数 (一次 Push 可能包含多个 Commits)
+                        payload = event.get('payload', {})
+                        commit_count += payload.get('size', 0)
+            
+            return commit_count
+
+        except Exception as e:
+            print(f"获取用户 {username} 提交数据失败: {e}")
+            return 0
+
 # 实例化服务，供其他模块调用
 github_service = GitHubService()

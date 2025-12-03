@@ -51,6 +51,15 @@ class Wish(db.Model):
     # 激活状态
     is_active = db.Column(db.Boolean, default=True)
 
+    # 1. 锁定状态：默认是 False（锁定），达成目标后变为 True（解锁）
+    is_unlocked = db.Column(db.Boolean, default=False, nullable=False)
+
+    # 2. 解锁条件的类型：例如 'weekly_commits', 'total_stars'
+    unlock_condition_type = db.Column(db.String(50), nullable=True)
+
+    # 3. 解锁条件的目标数值：例如 5 (次), 100 (Star)
+    unlock_target_value = db.Column(db.Integer, default=0)
+
 
 class PriceHistory(db.Model):
     """价格历史模型：记录每次抓取到的价格"""

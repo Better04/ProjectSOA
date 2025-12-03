@@ -28,7 +28,10 @@ def add_wish():
     url = data.get('url')
     target_price = data.get('target_price')
 
-    if not all([url, target_price]):
+    condition_type = data.get('condition_type')  # e.g. 'weekly_commits'
+    target_value = data.get('target_value')      # e.g. 5
+
+    if not url or target_price is None:
         return jsonify({'message': '缺少 URL 或期望价格'}), 400
 
     try:
@@ -38,7 +41,12 @@ def add_wish():
 
     user_id = session.get('user_id')
 
-    new_wish, msg = WishlistService.add_wish(user_id, url, target_price)
+    new_wish, msg = WishlistService.add_wish(
+        user_id, 
+        url, 
+        target_price,
+        condition_type=condition_type, 
+        target_value=target_value)
 
     if new_wish:
         return jsonify({'message': msg, 'wish_id': new_wish.id}), 201
@@ -60,3 +68,21 @@ def delete_wish(wish_id):
         return jsonify({'message': '心愿单项目删除成功'}), 200
     else:
         return jsonify({'message': '心愿单项目不存在或不属于该用户'}), 404
+    
+
+# 路由：检查成就并尝试解锁心愿
+# --------------------
+@wishlist_bp.route('/check-status', methods=['POST'])
+@login_required
+def check_unlock_status():
+    """
+    手动触发：检查当前用户的所有心愿解锁条件是否达成
+    """
+    user_id = session.get('user_id')
+    
+    success, msg = WishlistService.check_and_unlock_wishes(user_id)
+    
+    return jsonify({
+        'message': msg,
+        'unlocked': success
+    }), 200
