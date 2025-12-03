@@ -241,39 +241,50 @@ class GitHubService(BasePlatformService):
     def get_user_weekly_commit_count(self, username: str) -> int:
         """
         获取用户过去 7 天内的总提交次数 (Push Events)
+        修复版 V2：
+        1. timeout 增加到 30秒，防止网络超时。
+        2. 兼容 GitHub API 返回 size=0 的情况。
         """
         url = f"{GITHUB_API_BASE}/users/{username}/events"
         headers = self._get_headers()
-        
+
         try:
-            # 获取用户最近的公开动态
-            response = requests.get(url, headers=headers, params={'per_page': 100}, timeout=10)
+            # 🔧 修复点：将 timeout=10 改为 timeout=30
+            response = requests.get(url, headers=headers, params={'per_page': 100}, timeout=30)
             response.raise_for_status()
             events = response.json()
-            
+
             commit_count = 0
             from datetime import datetime, timedelta
-            
+
             # 计算7天前的时间点
             seven_days_ago = datetime.utcnow() - timedelta(days=7)
-            
             for event in events:
-                # 1. 筛选类型：必须是推送代码 (PushEvent)
                 if event.get('type') == 'PushEvent':
-                    # 2. 筛选时间：必须是最近7天
-                    created_at_str = event.get('created_at') # 格式: 2023-10-01T12:00:00Z
-                    # 转化为 datetime 对象
+                    created_at_str = event.get('created_at')
                     created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%SZ")
-                    
+
                     if created_at > seven_days_ago:
-                        # 3. 累加提交数 (一次 Push 可能包含多个 Commits)
                         payload = event.get('payload', {})
-                        commit_count += payload.get('size', 0)
-            
+
+                        # --- 核心修改：size 修正逻辑 ---
+                        size = payload.get('size', 0)
+
+                        # 如果是真实的 PushEvent 但 size 为 0，强制算作 1
+                        if size == 0:
+                            actual_count = 1
+                            print(f"   -> [Push] 时间: {created_at} | 原Size: 0 (修正为1)")
+                        else:
+                            actual_count = size
+                            print(f"   -> [Push] 时间: {created_at} | 原Size: {size}")
+
+                        commit_count += actual_count
+                        # -----------------------------
             return commit_count
 
         except Exception as e:
-            print(f"获取用户 {username} 提交数据失败: {e}")
+            print(f"❌ 获取用户 {username} 提交数据失败: {e}")
+            # 这里不打印堆栈了，只打印错误信息，以免刷屏
             return 0
 
 # 实例化服务，供其他模块调用
