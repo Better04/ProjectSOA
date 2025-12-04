@@ -25,6 +25,10 @@ def create_app(config_name='default'):
     from app.modules.wishlist import wishlist_bp
     from app.modules.devinfo import devinfo_bp # <-- 新增导入
 
+    # 在 app/__init__.py 中找到注册蓝图的位置，添加：
+    from app.modules.chat.views import chat_bp
+    app.register_blueprint(chat_bp, url_prefix='/api/chat')
+
     app.register_blueprint(user_bp)
     app.register_blueprint(wishlist_bp)
     app.register_blueprint(devinfo_bp) # <-- 新增注册
