@@ -119,5 +119,87 @@ class LLMAnalysisService:
             print(f"AI Service Error: {e}")
             return {"error": str(e)}
 
+    def analyze_specific_repo(self, repo_details: dict, readme_content: str) -> dict:
+        """
+        [任务 4 - 升级版] 针对单个仓库进行可视化数据分析。
+        要求 AI 输出数值型数据，用于前端渲染图表。
+        """
+        api_key = os.environ.get('MOONSHOT_API_KEY')
+        base_url = os.environ.get('MOONSHOT_BASE_URL', "https://api.moonshot.cn/v1")
+
+        if not api_key:
+            return {"error": "未配置 API KEY"}
+
+        safe_readme = readme_content[:8000] + "..." if len(readme_content) > 8000 else readme_content
+
+        # --- 修改点：Prompt 改为请求 JSON 数据，而非 Markdown 文本 ---
+        system_prompt = """
+        你是一个代码仓库可视化分析专家。你的任务是将 GitHub 仓库的价值转化为【可视化数据】。
+        请**不要**输出长篇大论的文字，而是输出**数值**和**短语**，以便前端渲染图表。
+
+        【分析维度】
+        1. **综合评分**: 0-100 分。
+        2. **五维能力 (Dimensions)**: 请从 [功能完备性, 代码规范度, 文档质量, 社区影响力, 技术创新性] 5个维度打分 (0-100)。
+        3. **适用场景 (Scenarios)**: 列出 3-5 个最适合使用该仓库的场景，并给出推荐指数 (0-100)。
+        4. **核心关键词**: 提取 5-8 个核心技术或功能关键词。
+
+        【输出格式】
+        请输出严格的 JSON 格式：
+        {
+            "summary": "一句话超简短总结 (30字以内)",
+            "overall_score": 85,
+            "radar_data": {
+                "functionality": 80,  // 功能完备性
+                "code_quality": 90,   // 代码规范度
+                "documentation": 70,  // 文档质量
+                "influence": 60,      // 社区影响力
+                "innovation": 85      // 技术创新性
+            },
+            "scenarios": [
+                {"name": "微服务架构", "score": 95},
+                {"name": "个人学习", "score": 80},
+                {"name": "生产环境", "score": 60}
+            ],
+            "keywords": ["Web框架", "Python", "轻量级", "WSGI", "路由系统"]
+        }
+        """
+
+        user_prompt = f"""
+        【仓库元数据】:
+        {json.dumps(repo_details, ensure_ascii=False)}
+
+        【README 文档片段】:
+        {safe_readme}
+
+        请生成可视化分析数据。
+        """
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "moonshot-v1-32k",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"}
+        }
+
+        try:
+            response = requests.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+
+            content = response.json()['choices'][0]['message']['content']
+            if content.strip().startswith("```"):
+                content = re.sub(r'^```json\s*|\s*```$', '', content.strip(), flags=re.MULTILINE)
+
+            return json.loads(content)
+
+        except Exception as e:
+            print(f"Repo Analysis Error: {e}")
+            return {"error": str(e)}
 
 llm_service = LLMAnalysisService()

@@ -3,6 +3,7 @@
 import requests
 import os;
 import base64
+import time
 from .base_platform_service import BasePlatformService
 
 # GitHub API 的基础 URL
@@ -81,14 +82,12 @@ class GitHubService(BasePlatformService):
         """
         repo_url = f"{GITHUB_API_BASE}/repos/{owner}/{repo_name}"
         contributors_url = f"{repo_url}/contributors"
-        commit_activity_url = f"{repo_url}/stats/commit_activity"  # 周提交统计
+        commit_activity_url = f"{repo_url}/stats/commit_activity"
 
-        # 使用带 Token 的 headers
         headers = self._get_headers()
-
         details = {}
 
-        # 1. 获取基本信息（用于验证仓库存在性）
+        # 1. 获取基本信息
         try:
             repo_resp = requests.get(repo_url, headers=headers, timeout=5)
             repo_resp.raise_for_status()
@@ -96,50 +95,65 @@ class GitHubService(BasePlatformService):
 
             details.update({
                 'name': repo_data.get('name'),
+                'full_name': repo_data.get('full_name'),  # [新增] 方便后续使用
                 'description': repo_data.get('description') or '暂无描述',
                 'updated_at': repo_data.get('updated_at'),
                 'language': repo_data.get('language'),
                 'forks_count': repo_data.get('forks_count'),
-                'open_issues_count': repo_data.get('open_issues_count')
+                'open_issues_count': repo_data.get('open_issues_count'),
+                'stargazers_count': repo_data.get('stargazers_count', 0),  # [新增] 显式获取 star 数
+                'subscribers_count': repo_data.get('subscribers_count', 0),  # [新增] 关注人数
             })
         except requests.RequestException as e:
             raise ValueError(f"无法获取仓库基本信息: {e}")
 
-        # 2. 获取贡献者信息（成员情况和贡献情况）
+        # 2. 获取贡献者信息 (保持不变)
         try:
-            # 默认 GitHub API 响应是按贡献次数降序排列的
             contr_resp = requests.get(contributors_url, headers=headers, timeout=5)
             contr_resp.raise_for_status()
             contr_data = contr_resp.json()
-
+            # ... (这部分代码保持原样) ...
             contributors = []
-            for contributor in contr_data[:5]:  # 只返回前5名贡献者作为代表
+            for contributor in contr_data[:5]:
                 contributors.append({
                     'login': contributor.get('login'),
-                    'avatar_url': contributor.get('avatar_url'),  # 获取头像
+                    'avatar_url': contributor.get('avatar_url'),
                     'contributions': contributor.get('contributions'),
                     'html_url': contributor.get('html_url')
                 })
             details['contributors'] = contributors
-
         except requests.RequestException:
             details['contributors'] = []
 
-        # 3. 获取最近提交活动（仓库更新情况 - 深度）
+        # 3. [核心修改 - 任务 1] 获取最近提交活动 (增加重试机制)
         try:
-            activity_resp = requests.get(commit_activity_url, headers=headers, timeout=5)
+            max_retries = 3
+            retry_count = 0
+            activity_data = []
 
-            if activity_resp.status_code == 202:
-                # 202 表示 GitHub 正在计算统计数据
-                details['commit_activity'] = "提交活动统计正在 GitHub 后台计算中，请稍后重试。"
+            while retry_count < max_retries:
+                activity_resp = requests.get(commit_activity_url, headers=headers, timeout=5)
+
+                if activity_resp.status_code == 200:
+                    activity_data = activity_resp.json()
+                    break  # 成功拿到数据
+                elif activity_resp.status_code == 202:
+                    # 202 表示 GitHub 正在后台计算，需要等待
+                    print(f"🔄 GitHub 正在计算 {repo_name} 的统计数据 (202)，等待 1秒重试...")
+                    time.sleep(1)
+                    retry_count += 1
+                else:
+                    activity_resp.raise_for_status()
+
+            if not activity_data:
+                # 重试多次后依然拿不到，或者非 202/200 错误
+                details['commit_activity'] = "暂无数据或计算超时"
                 details['recent_commit_count_4weeks'] = 0
             else:
-                activity_resp.raise_for_status()
-                activity_data = activity_resp.json()
                 # 提取最近四周的提交总数
                 recent_commits = sum(week.get('total', 0) for week in activity_data[-4:])
                 details['recent_commit_count_4weeks'] = recent_commits
-                details['weekly_activity'] = activity_data  # 包含过去一年每周的提交数据
+                details['weekly_activity'] = activity_data
 
         except requests.RequestException:
             details['commit_activity'] = '无法获取提交活动数据。'

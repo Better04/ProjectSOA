@@ -360,3 +360,31 @@ def generate_resume_pdf(username):
     response.headers['Content-Disposition'] = f'{display_mode}; filename="{filename}"'
 
     return response
+
+
+@ai_bp.route('/analyze/repo/<string:owner>/<string:repo_name>', methods=['GET'])
+def analyze_single_repo_route(owner, repo_name):
+    """
+    [任务 4] 单仓库深度分析接口
+    """
+    try:
+        # 1. 获取仓库详情 (复用 github_service)
+        repo_details = github_service.fetch_repo_details(owner, repo_name)
+
+        # 2. 获取 Readme (用于分析写了什么内容)
+        readme_content = github_service.fetch_repo_readme(owner, repo_name)
+
+        # 3. 调用 AI 分析
+        analysis_result = llm_service.analyze_specific_repo(repo_details, readme_content)
+
+        if "error" in analysis_result:
+            return jsonify({'message': analysis_result['error']}), 500
+
+        return jsonify({
+            'message': '仓库分析完成',
+            'data': analysis_result
+        }), 200
+
+    except Exception as e:
+        print(f"Controller Error: {e}")
+        return jsonify({'message': '服务器内部错误'}), 500
