@@ -32,13 +32,9 @@ print(f"--- [PDF Init] Font path: {FONT_PATH}")
 
 if os.path.exists(FONT_PATH):
     try:
-        # 将 SimHei 注册为 Helvetica (xhtml2pdf 的默认字体)
-        # 这样无需在每个 CSS 中指定字体，自动生效
         pdfmetrics.registerFont(TTFont('Helvetica', FONT_PATH))
         pdfmetrics.registerFont(TTFont('Arial', FONT_PATH))
         pdfmetrics.registerFont(TTFont('sans-serif', FONT_PATH))
-
-        # 映射粗体/斜体到同一个字体文件，防止报错
         addMapping('Helvetica', 0, 0, 'Helvetica')
         addMapping('Helvetica', 1, 0, 'Helvetica')
         addMapping('Helvetica', 0, 1, 'Helvetica')
@@ -50,44 +46,35 @@ else:
 
 
 # ---------------------------------------------------------
-# [核心修复] 强制换行工具函数
+# [工具函数] 文本处理
 # ---------------------------------------------------------
-def split_text_by_length(text, limit=55):
+def split_text_by_length(text, limit=65):
     """
-    核心修复逻辑：
-    将长文本按指定长度 limit (默认55字符) 强制切分，
-    并插入 <br/> 标签实现换行。
-    这比依赖 CSS word-break 在 xhtml2pdf 中更可靠。
+    核心修复逻辑：强制切分长文本
     """
     if not text:
         return ""
-
-    # 移除可能存在的非法字符或多余空白，避免干扰
     text = text.strip()
-
-    # 简单切片法：每 limit 个字符切一刀
     chunks = [text[i:i + limit] for i in range(0, len(text), limit)]
     return "<br/>".join(chunks)
 
 
-def process_markdown_text(text, limit=55):
+def process_markdown_text(text, limit=65):
     """
-    专门处理 Markdown 文本。
-    为了防止把 Markdown 的标题标记（如 # 标题）切坏，
-    我们按行处理，只对长行进行切分。
+    Markdown 清洗与格式化
     """
     if not text:
         return ""
+    # 移除 MD 符号
+    text = text.replace('##', '').replace('###', '').replace('**', '').replace('__', '')
 
     lines = text.split('\n')
     processed_lines = []
     for line in lines:
         if len(line) > limit:
-            # 如果这一行超过了限制，就进行强制切分
             processed_lines.append(split_text_by_length(line, limit))
         else:
             processed_lines.append(line)
-
     return "\n".join(processed_lines)
 
 
@@ -111,7 +98,6 @@ def analyze_github_user_radar(username):
         except json.JSONDecodeError:
             pass
 
-    # 2. 获取基础数据
     profile = github_service.fetch_user_profile(username)
     if not profile:
         return jsonify({'message': f'GitHub 用户 {username} 不存在或 API 受限'}), 404
@@ -120,7 +106,6 @@ def analyze_github_user_radar(username):
     if not repos:
         return jsonify({'message': '该用户没有公开仓库，无法分析'}), 400
 
-    # 3. 数据准备
     sorted_repos = sorted(repos, key=lambda r: (r.get('stars', 0), r.get('updated_at', '')), reverse=True)
     simple_repos_data = []
     for r in sorted_repos:
@@ -151,13 +136,11 @@ def analyze_github_user_radar(username):
             'readme': readme_content
         })
 
-    # 4. 调用 AI
     ai_result = llm_service.analyze_github_user(username, profile, detailed_repos, simple_repos_data)
 
     if "error" in ai_result:
         return jsonify({'message': ai_result['error'], 'data': ai_result, 'avatar_url': profile.get('avatar_url')}), 500
 
-    # 5. 存入数据库
     try:
         analysis_json_str = json.dumps(ai_result, ensure_ascii=False)
         new_record = GitHubAnalysis(
@@ -179,13 +162,13 @@ def analyze_github_user_radar(username):
 
 
 # ---------------------------------------------------------
-# 路由：生成 PDF 简历 (物理切分 + 技术栈空格修复版)
+# 路由：生成专业 PDF 简历 (技术栈空格修复版)
 # ---------------------------------------------------------
 @ai_bp.route('/resume/<string:username>', methods=['GET'])
 def generate_resume_pdf(username):
     display_mode = request.args.get('mode', 'attachment')
 
-    # 字符限制配置
+    # 稍微放宽字符限制
     LINE_CHAR_LIMIT = 55
 
     record = GitHubAnalysis.query.filter_by(github_username=username).order_by(GitHubAnalysis.timestamp.desc()).first()
@@ -194,30 +177,62 @@ def generate_resume_pdf(username):
 
     data = json.loads(record.analysis_json)
 
-    # [修复步骤 1] 处理 Summary (深度评估)
+    # ---------------- 数据清洗 ----------------
+
+    # Summary
     raw_summary = data.get('summary', '暂无总结')
     safe_summary_md = process_markdown_text(raw_summary, LINE_CHAR_LIMIT)
     summary_html = markdown.markdown(safe_summary_md)
 
-    # [修复步骤 2] 处理 Repos (项目经历)
+    # Radar
+    radar = data.get('radar_scores', {})
+    radar_map = {
+        "code_quality": "代码规范",
+        "activity": "活跃度",
+        "documentation": "文档质量",
+        "influence": "影响力",
+        "tech_breadth": "技术广度"
+    }
+    radar_items = []
+    for key, label in radar_map.items():
+        score = radar.get(key, 60)
+        radar_items.append({"name": label, "score": score})
+
+    # Repos
     processed_repos = []
-    for repo in data.get('repositories', [])[:5]:
+    for repo in data.get('repositories', [])[:6]:
         repo_copy = repo.copy()
         raw_ai_summary = repo_copy.get('ai_summary', '')
         repo_copy['ai_summary_safe'] = split_text_by_length(raw_ai_summary, LINE_CHAR_LIMIT)
         processed_repos.append(repo_copy)
 
-    # 3. 准备渲染数据
+    # 头衔计算
+    score = data.get('overall_score', 0)
+    if score >= 90:
+        level_title = "卓越级开源架构师"
+    elif score >= 80:
+        level_title = "资深全栈开发者"
+    elif score >= 70:
+        level_title = "高级开源贡献者"
+    else:
+        level_title = "新锐开发者"
+
+    # 上下文
     resume_content = {
         'username': username,
         'avatar_url': record.avatar_url,
-        'score': data.get('overall_score', 0),
+        'overall_score': score,
+        'level_title': level_title,
         'tech_stack': data.get('tech_stack', []),
         'summary_html': summary_html,
-        'repos': processed_repos
+        'repos': processed_repos,
+        'radar_items': radar_items,
+        'date': datetime.now().strftime('%Y/%m/%d'),
+        'email': f"{username}@github.com",
     }
 
-    # 4. 构建 HTML 模板
+    # ---------------- HTML 模板 ----------------
+
     html_template = f"""
     <!DOCTYPE html>
     <html lang="zh-CN">
@@ -225,127 +240,182 @@ def generate_resume_pdf(username):
         <meta charset="UTF-8">
         <style>
             @page {{
-                size: A4;
-                margin: 2cm;
-                @frame footer_frame {{
-                    -pdf-frame-content: footerContent;
-                    bottom: 1cm;
-                    margin-left: 2cm;
-                    margin-right: 2cm;
-                    height: 1cm;
-                }}
+                size: A4 portrait;
+                margin: 0;
             }}
 
-            /* 字体设置 */
-            * {{ font-family: 'Helvetica', 'Arial', sans-serif; }}
+            * {{ font-family: 'Helvetica', 'Arial', sans-serif; box-sizing: border-box; }}
+            body {{ font-size: 9px; line-height: 1.4; margin: 0; padding: 0; color: #333; }}
 
-            body {{
-                font-family: 'Helvetica', 'Arial', sans-serif; 
-                line-height: 1.5;
-                color: #333;
-                font-size: 12px;
+            .container-table {{
+                width: 100%;
+                border-collapse: collapse;
             }}
 
-            .header {{
-                text-align: center;
-                border-bottom: 2px solid #1976D2;
-                padding-bottom: 10px;
-                margin-bottom: 20px;
+            /* --- 左侧侧边栏 --- */
+            .sidebar {{
+                width: 28%;
+                background-color: #1a252f;
+                color: #ecf0f1;
+                vertical-align: top;
+                padding: 30px 15px;
             }}
-            .header h1 {{ font-size: 24px; color: #1976D2; margin: 0; }}
+
+            /* --- 右侧内容区 --- */
+            .main-content {{
+                width: 72%;
+                background-color: #ffffff;
+                vertical-align: top;
+                padding: 30px 25px;
+            }}
+
+            /* --- 左侧元素 --- */
+            .avatar-box {{ text-align: center; margin-bottom: 20px; }}
+            .avatar-img {{
+                width: 85px; height: 85px; 
+                border-radius: 50%; 
+                border: 3px solid #34495e;
+            }}
+            .sidebar-name {{ font-size: 18px; font-weight: bold; margin-top: 10px; color: #fff; text-align: center; }}
+            .sidebar-title {{ font-size: 10px; color: #95a5a6; text-align: center; margin-bottom: 25px; font-style: italic; }}
+
+            .sidebar-header {{
+                font-size: 11px; font-weight: bold; color: #3498db; 
+                border-bottom: 1px solid #34495e; padding-bottom: 3px; 
+                margin-top: 20px; margin-bottom: 10px; letter-spacing: 1px;
+            }}
+
+            .contact-item {{ font-size: 9px; color: #bdc3c7; margin-bottom: 6px; }}
+
+            /* 技术栈标签修复 */
+            .tech-tag {{
+                display: inline-block; background-color: #2c3e50; color: #ecf0f1;
+                padding: 2px 6px; margin: 0 4px 5px 0; border-radius: 3px;
+                font-size: 8px; border: 1px solid #3e5871;
+            }}
+
+            .skill-item {{ margin-bottom: 8px; }}
+            .skill-name {{ font-size: 8px; color: #bdc3c7; margin-bottom: 2px; }}
+            .progress-bg {{ width: 100%; background-color: #2c3e50; height: 4px; border-radius: 2px; }}
+            .progress-bar {{ height: 4px; background-color: #3498db; border-radius: 2px; }}
+
+            .score-box {{ text-align: center; margin-top: 30px; border: 1px solid #34495e; padding: 10px; border-radius: 6px; }}
+            .score-val {{ font-size: 28px; font-weight: bold; color: #f39c12; }}
+
+            /* --- 右侧元素 --- */
+            .main-header {{
+                border-bottom: 2px solid #2c3e50; padding-bottom: 8px; margin-bottom: 15px;
+            }}
+            .main-title {{ font-size: 20px; color: #2c3e50; font-weight: bold; }}
+            .main-subtitle {{ font-size: 10px; color: #7f8c8d; margin-top: 3px; }}
 
             .section-title {{
-                font-size: 16px;
-                font-weight: bold;
-                color: #1976D2;
-                border-left: 4px solid #1976D2;
-                padding-left: 10px;
-                margin-top: 20px;
-                margin-bottom: 10px;
-                background-color: #f0f7ff;
+                font-size: 13px; color: #2c3e50; font-weight: bold; 
+                margin-top: 15px; margin-bottom: 10px; 
+                background-color: #f2f3f4; padding: 4px 8px; border-left: 4px solid #2c3e50;
             }}
 
-            .tech-tag {{
-                display: inline-block;
-                background-color: #e3f2fd;
-                color: #1565c0;
-                padding: 4px 8px; /* 增加一点内边距 */
-                margin: 2px 5px 2px 0; /* 右侧增加 5px 边距 */
+            .summary-text {{
+                font-size: 9px; color: #444; line-height: 1.5; text-align: justify;
+                padding: 0 5px; margin-bottom: 15px;
+            }}
+            .summary-text p {{ margin: 0 0 5px 0; }}
+
+            .repo-card {{
+                background-color: #fbfbfb;
+                border: 1px solid #eee;
                 border-radius: 4px;
-                font-size: 10px;
+                padding: 8px 10px;
+                margin-bottom: 8px;
             }}
+            .repo-top {{ width: 100%; margin-bottom: 3px; }}
+            .repo-name {{ font-size: 11px; font-weight: bold; color: #2980b9; }}
+            .repo-status {{ font-size: 8px; color: #95a5a6; text-align: right; }}
+            .repo-desc {{ font-size: 9px; color: #555; line-height: 1.4; }}
 
-            .content-box {{
-                width: 100%;
-                margin-bottom: 10px;
+            .footer {{
+                margin-top: 20px; text-align: center; font-size: 8px; color: #ccc; border-top: 1px solid #f0f0f0; padding-top: 5px;
             }}
-
-            .repo-item {{
-                margin-bottom: 15px;
-                border-bottom: 1px dashed #eee;
-                padding-bottom: 10px;
-            }}
-
-            .repo-name {{ 
-                font-weight: bold; 
-                font-size: 14px; 
-                color: #000;
-            }}
-
-            .repo-desc {{ 
-                font-size: 12px; 
-                color: #555;
-                margin-top: 5px;
-            }}
-
-            .score-badge {{ font-size: 20px; font-weight: bold; color: #e65100; }}
         </style>
     </head>
     <body>
-        <div class="header">
-            <h1>{resume_content['username']} 技术分析报告</h1>
-            <p>GitHub 深度评估 · AI 生成</p>
-        </div>
+        <table class="container-table">
+            <tr>
+                <td class="sidebar">
+                    <div class="avatar-box">
+                        <img src="{resume_content['avatar_url']}" class="avatar-img" />
+                        <div class="sidebar-name">{resume_content['username']}</div>
+                        <div class="sidebar-title">{resume_content['level_title']}</div>
+                    </div>
 
-        <div>
-            <div class="section-title">综合评分</div>
-            <div class="score-badge">{resume_content['score']} / 100</div>
-        </div>
+                    <div class="sidebar-header">基本信息 / INFO</div>
+                    <div class="contact-item">📅 {resume_content['date']}</div>
+                    <div class="contact-item">✉️ {resume_content['email']}</div>
+                    <div class="contact-item">📍 Remote / Global</div>
 
-        <div>
-            <div class="section-title">技术栈</div>
-            <div class="content-box">
-                {''.join([f'<span class="tech-tag">{t}</span>&nbsp;&nbsp;' for t in resume_content['tech_stack']])}
-            </div>
-        </div>
+                    <div class="sidebar-header">核心能力 / SKILLS</div>
+                    {''.join([f'''
+                    <div class="skill-item">
+                        <div class="skill-name">{item['name']}</div>
+                        <div class="progress-bg">
+                            <div class="progress-bar" style="width: {item['score']}%;"></div>
+                        </div>
+                    </div>
+                    ''' for item in resume_content['radar_items']])}
 
-        <div>
-            <div class="section-title">深度能力评估</div>
-            <div class="content-box">
-                {resume_content['summary_html']}
-            </div>
-        </div>
+                    <div class="sidebar-header">技术栈 / TECH</div>
+                    <div style="line-height: 1.8;">
+                        {'  '.join([f'<span class="tech-tag">{t}</span>' for t in resume_content['tech_stack']])}
+                    </div>
 
-        <div>
-            <div class="section-title">精选开源贡献</div>
-            {''.join([f'''
-            <div class="repo-item">
-                <div class="repo-name">{r.get('name')} 
-                    <span style="font-size:10px;color:#999;font-weight:normal">({r.get('status', 'Active')})</span>
-                </div>
-                <div class="repo-desc">{r.get('ai_summary_safe')}</div>
-            </div>
-            ''' for r in resume_content['repos']])}
-        </div>
+                    <div class="score-box">
+                        <div class="score-val">{resume_content['overall_score']}</div>
+                        <div style="font-size:8px; color:#bdc3c7;">综合技术评分</div>
+                    </div>
+                </td>
 
-        <div id="footerContent" style="text-align: center; color: #999; font-size: 10px;">
-            此报告由 DevLife Aggregator 生成 · {datetime.now().strftime('%Y-%m-%d')}
-        </div>
+                <td class="main-content">
+                    <div class="main-header">
+                        <div class="main-title">{resume_content['username']}</div>
+                        <div class="main-subtitle">职业目标：全栈开发工程师 / 开源贡献者</div>
+                    </div>
+
+                    <div class="section-title">个人总结 / SUMMARY</div>
+                    <div class="summary-text">
+                        {resume_content['summary_html']}
+                    </div>
+
+                    <div class="section-title">开源项目经历 / PROJECTS</div>
+                    {''.join([f'''
+                    <div class="repo-card">
+                        <table class="repo-top">
+                            <tr>
+                                <td class="repo-name">{r.get('name')}</td>
+                                <td class="repo-status">{r.get('status', 'Active')} · ⭐ {r.get('stars', 0) if r.get('stars') else '0'}</td>
+                            </tr>
+                        </table>
+                        <div class="repo-desc">{r.get('ai_summary_safe')}</div>
+                    </div>
+                    ''' for r in resume_content['repos']])}
+
+                    <div class="section-title">成就亮点 / HIGHLIGHTS</div>
+                    <div style="font-size: 9px; color: #555; line-height: 1.6; padding: 5px;">
+                        • <strong>代码影响力：</strong> 在 GitHub 社区保持活跃，项目 Star 总数体现了技术受认可度。<br/>
+                        • <strong>技术栈覆盖：</strong> 熟练掌握 {len(resume_content['tech_stack'])} 种以上前沿技术，具备独立开发能力。<br/>
+                        • <strong>持续交付：</strong> 仓库提交记录显示了稳定的编码习惯和良好的项目维护意识。
+                    </div>
+
+                    <div class="footer">
+                        Generated by DevLife Aggregator · Professional Career Analysis
+                    </div>
+                </td>
+            </tr>
+        </table>
     </body>
     </html>
     """
 
-    # 4. 生成 PDF
+    # 生成 PDF
     pdf_file = BytesIO()
     pisa_status = pisa.CreatePDF(html_template, dest=pdf_file, encoding='utf-8')
 
@@ -356,7 +426,7 @@ def generate_resume_pdf(username):
     response = make_response(pdf_file.read())
     response.headers['Content-Type'] = 'application/pdf'
 
-    filename = f"{username}_Resume.pdf"
+    filename = f"{username}_Professional_Resume.pdf"
     response.headers['Content-Disposition'] = f'{display_mode}; filename="{filename}"'
 
     return response
@@ -364,17 +434,10 @@ def generate_resume_pdf(username):
 
 @ai_bp.route('/analyze/repo/<string:owner>/<string:repo_name>', methods=['GET'])
 def analyze_single_repo_route(owner, repo_name):
-    """
-    [任务 4] 单仓库深度分析接口
-    """
+    # 保持不变
     try:
-        # 1. 获取仓库详情 (复用 github_service)
         repo_details = github_service.fetch_repo_details(owner, repo_name)
-
-        # 2. 获取 Readme (用于分析写了什么内容)
         readme_content = github_service.fetch_repo_readme(owner, repo_name)
-
-        # 3. 调用 AI 分析
         analysis_result = llm_service.analyze_specific_repo(repo_details, readme_content)
 
         if "error" in analysis_result:

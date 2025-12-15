@@ -7,7 +7,6 @@ from app.services.notification_service import send_price_alert
 # 导入 Flask，但仅用于类型提示，不用于创建实例
 from flask import Flask
 
-
 # 🚨 修正：接收 config_name，而不是 app 实例
 def run_price_monitoring(config_name: str):
     """
@@ -26,7 +25,6 @@ def run_price_monitoring(config_name: str):
         # 2. 查询所有活跃的心愿商品
         # 这里我们只查询有活跃心愿的 Item，避免重复监控
         all_monitored_items = Item.query.join(Wish).filter(Wish.is_active == True).distinct().all()
-
         checked_item_ids = set()
 
         for item in all_monitored_items:
@@ -64,13 +62,17 @@ def run_price_monitoring(config_name: str):
                 # 6. 检查并触发通知
                 wishes_for_item = Wish.query.filter_by(item_id=item.id, is_active=True).all()
                 for wish in wishes_for_item:
-                    # 价格达到期望，发送通知 (即使价格是 0.00 且目标价高于 0.00 也会触发)
                     if new_price <= wish.target_price:
+                        print(f"   -> 🔔 触发通知: {item.title} 图片URL: {item.image_url}")  # 增加调试日志
+
+                        # 🚨 关键修改：传入 image_url
                         send_price_alert(
                             user_id=wish.user_id,
                             item_title=item.title,
                             current_price=new_price,
-                            target_price=wish.target_price
+                            target_price=wish.target_price,
+                            image_url=item.image_url,  # <--- 确保这里取到了值
+                            item_url=item.original_url
                         )
 
             except Exception as e:

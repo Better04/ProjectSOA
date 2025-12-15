@@ -133,21 +133,18 @@ class WishlistService:
     def check_and_unlock_wishes(user_id: int):
         """
         核心功能：检查该用户的所有锁定心愿，如果达成 GitHub 目标则解锁
-        此方法供 API /refresh 路由调用
         """
         try:
-            # 1. 获取用户信息 (我们需要 GitHub 用户名)
+            # 1. 获取用户信息
             user = User.query.get(user_id)
             if not user or not user.username:
-                # 这里假设 user.username 存的是 GitHub 用户名
                 return False, "找不到用户或用户未绑定 GitHub"
 
-            github_username = user.username 
+            github_username = user.username
 
             # 2. 查找该用户所有【未解锁】且【有条件】的心愿
-            # 注意：这里使用了 Wish 模型里新加的字段
             locked_wishes = Wish.query.filter_by(
-                user_id=user_id, 
+                user_id=user_id,
                 is_unlocked=False
             ).filter(Wish.unlock_condition_type.isnot(None)).all()
 
@@ -155,10 +152,9 @@ class WishlistService:
                 return False, "当前没有需要解锁的心愿"
 
             unlocked_count = 0
-            
+
             # 3. 遍历检查
             for wish in locked_wishes:
-                # 问裁判：达标了吗？
                 achieved = achievement_service.check_achievement(
                     github_username,
                     wish.unlock_condition_type,
@@ -169,23 +165,24 @@ class WishlistService:
                     wish.is_unlocked = True
                     unlocked_count += 1
                     try:
-                        # 准备数据
                         title = wish.item.title if wish.item else "神秘商品"
                         url = wish.item.original_url if wish.item else ""
+                        # 获取图片 URL
+                        image_url = wish.item.image_url if wish.item else None
+
                         condition_msg = f"{wish.unlock_condition_type} >= {wish.unlock_target_value}"
-                        
-                        # 发送解锁通知
-                        send_unlock_notification(user_id, title, url, condition_msg)
-                        
+
+                        # 发送解锁通知 (传入 image_url)
+                        send_unlock_notification(user_id, title, url, condition_msg, image_url)
+
                     except Exception as e:
-                        # 捕获错误，防止因为发邮件失败导致数据库回滚
                         print(f"邮件发送非致命错误: {e}")
 
             # 4. 提交更改
             if unlocked_count > 0:
                 db.session.commit()
                 return True, f"恭喜！成功解锁了 {unlocked_count} 个心愿！"
-            
+
             return False, "条件尚未达成，继续加油！"
 
         except Exception as e:
