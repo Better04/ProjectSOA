@@ -114,7 +114,6 @@ def generate_ai_evaluation(score, tech_stack):
         f"更体现了成熟的软件工程思维。综合评分 {score}/100。"
     )
 
-    # 关键修改：去除 text-align: justify 相关的隐患，这里只负责内容结构
     # class="eval-p" 将在 CSS 中被设置为左对齐 + 首行缩进
     intro_html = f'<div class="eval-p">{intro}</div>'
 
@@ -131,7 +130,6 @@ def generate_ai_evaluation(score, tech_stack):
     html = intro_html
     for title, content in points:
         clean_content = content.replace('\n', '').strip()
-        # 注意：这里也移除了潜在的导致排版问题的样式
         html += f"""
         <div class="eval-item">
             <span class="eval-title">{title}：</span>{clean_content}
@@ -228,7 +226,7 @@ def analyze_github_user_radar(username):
 
 
 # ---------------------------------------------------------
-# 路由：生成简历 (完美缩进修复版)
+# 路由：生成简历
 # ---------------------------------------------------------
 @ai_bp.route('/resume/<string:username>', methods=['GET'])
 def generate_resume_pdf(username):
@@ -241,7 +239,10 @@ def generate_resume_pdf(username):
     data = json.loads(record.analysis_json)
 
     # ---------------- 1. 内容构建 ----------------
-    summary_bullets = expand_summary(data.get('summary', ''))
+    # [修改] 优先使用 resume_summary (短摘要)，如果没有则使用 summary 并截取前 200 字
+    # 这样可以确保网页端使用 summary (500字长文) 的同时，PDF 不会因为字数过多而排版混乱
+    short_summary_text = data.get('resume_summary') or data.get('summary', '')[:200]
+    summary_bullets = expand_summary(short_summary_text)
 
     # ... (中间数据处理逻辑保持不变) ...
     processed_repos = []
@@ -278,7 +279,7 @@ def generate_resume_pdf(username):
         'university': "Shanghai Jiao Tong University"
     }
 
-    # ---------------- 2. CSS 模板 (包含修复) ----------------
+    # ---------------- 2. CSS 模板 ----------------
 
     html_template = f"""
     <!DOCTYPE html>
