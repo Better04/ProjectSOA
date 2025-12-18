@@ -39,6 +39,9 @@ def create_app(config_name='default'):
     from app.modules.ai_analysis import ai_bp
     app.register_blueprint(ai_bp)
 
+    from app.modules.battle.views import battle_bp
+    app.register_blueprint(battle_bp)
+
     # 简单的测试路由
     @app.route('/')
     def index():

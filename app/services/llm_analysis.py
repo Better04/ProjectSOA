@@ -201,5 +201,99 @@ class LLMAnalysisService:
         except Exception as e:
             print(f"Repo Analysis Error: {e}")
             return {"error": str(e)}
+    
+    def analyze_battle(self, player1_data: dict, player2_data: dict) -> str:
+        """
+        对战解说功能
+        接收两名选手的完整数据，调用 AI 生成激情解说词。
+        """
+        # 0. 检查 API Key
+        api_key = os.environ.get('MOONSHOT_API_KEY')
+        base_url = os.environ.get('MOONSHOT_BASE_URL', "https://api.moonshot.cn/v1")
+        
+        if not api_key:
+            return "解说员正在休息（后端未配置 API Key），请自行根据雷达图判断胜负！"
+
+        # 1. 智能判定对战类型，用于指导 AI 的解说侧重点
+        # 即使两边都没注册 (is_member=False)，这里也能处理
+        p1_is_member = player1_data['internal_data'].get('is_member', False)
+        p2_is_member = player2_data['internal_data'].get('is_member', False)
+
+        battle_context = ""
+        if p1_is_member and p2_is_member:
+            battle_context = "【场景】：这是一场平台内部的‘巅峰内战’。请重点对比两人的心愿完成度（梦想）和 GitHub 技术实力（现实）。"
+        elif not p1_is_member and not p2_is_member:
+            battle_context = "【场景】：这是一场‘野生大神遭遇战’。两位选手均未入驻本平台（心愿数据均为0）。请完全忽略心愿数据，**专注于 GitHub 数据的硬核技术对比**（仓库、粉丝、活跃度、Star数）。不要嘲讽他们没有心愿，要赞叹他们的技术。"
+        else:
+            battle_context = "【场景】：这是一场‘踢馆赛’（会员 VS 路人）。请幽默地调侃路人选手虽然技术可能很强，但因为没有许愿单而显得‘缺乏生活情趣’或‘没有梦想’，突显会员的主场优势。"
+
+        # 2. 构造 System Prompt (人设与规则)
+        system_prompt = f"""
+        你是一名《代码竞技场》的金牌解说员，风格幽默、犀利、充满激情（类似电竞解说）。
+        你的任务是根据两名程序员的【GitHub数据】和【本平台许愿数据】进行 1v1 对比分析。
+        
+        {battle_context}
+        
+        【输出要求】
+        - 不需要输出 JSON，直接输出一段**纯文本**解说词。
+        - 字数严格控制在 **150字 - 200字** 之间。
+        - 必须包含一个明确的**“胜负判定”**或**“风格评价”**。
+        - 适当使用 Emoji 🎤 ⚔️ 🏆 🔥。
+        """
+
+        # 3. 构造 User Prompt (格式化数据喂给 AI)
+        def format_player_info(p_data):
+            gh = p_data['github_data']
+            internal = p_data['internal_data']
+            
+            # 基础信息
+            info = f"选手: {p_data['username']}\n"
+            info += f"   - GitHub: {gh.get('repos', 0)} 仓库, {gh.get('followers', 0)} 粉丝, {gh.get('stars', 0)} Stars, 本周提交 {gh.get('commits_weekly', 0)} 次\n"
+            
+            # 平台信息
+            if internal.get('is_member'):
+                info += f"   - 平台战力: 认证会员 (心愿数: {internal.get('wishes_count')}, 积分: {internal.get('score')})\n"
+            else:
+                info += f"   - 平台战力: 路人 (无本平台记录)\n"
+            
+            return info
+
+        user_prompt = f"""
+        【红方选手】
+        {format_player_info(player1_data)}
+
+        【蓝方选手】
+        {format_player_info(player2_data)}
+
+        请开始你的解说！
+        """
+
+        # 4. 调用大模型
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "moonshot-v1-32k",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7, # 稍微调高温度，让解说更生动
+        }
+
+        try:
+            # 这里的 timeout 设置为 60 秒，防止 AI 思考过久
+            response = requests.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+            
+            return content
+
+        except Exception as e:
+            print(f"Battle Analysis AI Error: {e}")
+            return "🎤 滋...滋... 现场信号受到太阳黑子干扰，解说员暂时失联！请观众朋友们直接看大屏幕上的数据对比！"
 
 llm_service = LLMAnalysisService()
