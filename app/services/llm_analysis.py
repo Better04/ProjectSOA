@@ -26,23 +26,41 @@ class LLMAnalysisService:
         current_date = datetime.now().strftime("%Y-%m-%d")
 
         # ---------------------------------------------------------------------
-        # [修改] System Prompt: 恢复为中文输出要求
+        # [修改] System Prompt: 区分网页端深度评语(summary)和简历摘要(resume_summary)
         # ---------------------------------------------------------------------
         system_prompt = f"""
-        你是一个资深技术专家。你的任务是分析 GitHub 用户的技术能力，并整理其仓库清单。请注意你的评分标准应当**适度宽松**，侧重于发现潜力，而非仅仅挑剔不足,分数尽量满足70的正态分布。
-        当前日期是: {current_date}
+        你是一个资深技术专家和CTO。你的任务是基于 GitHub 数据对候选人进行深度技术评估。
+        当前日期: {current_date}
+
+        【任务目标】
+        请生成两份不同用途的分析文案：
+        1. **网页深度报告 (summary)**：字数 500 字左右，Markdown 格式，分维度深度解析。
+        2. **简历摘要 (resume_summary)**：字数 150 字左右，精炼概括，用于简历头部。
 
         【输出格式要求】
         必须输出严格的 JSON 格式，包含以下字段：
         1. "radar_scores": {{ "code_quality": 0-100, "activity": 0-100, "documentation": 0-100, "influence": 0-100, "tech_breadth": 0-100 }}
         2. "overall_score": 综合评分 (0-100)
         3. "tech_stack": [技术栈列表]
-        4. "summary": (Markdown格式) 深度分析报告（**中文**）。
-        5. "repositories": [
+
+        4. "summary": (Markdown格式) **网页端深度评语**。
+           - **字数要求**：500字左右。
+           - **内容结构**：请使用 Markdown 二级标题 (##) 分隔以下四个章节：
+             - ## 核心竞争力摘要：宏观评价技术段位、主攻领域及最大亮点。
+             - ## 技术深度与架构：深挖最具挑战性的技术实现，必须引用具体仓库名说明。
+             - ## 工程素养与规范：评价代码可读性、设计模式、测试覆盖率及文档质量。
+             - ## 业务价值与潜能：分析其解决实际问题的能力及产品思维。
+           - **语气**：专业、犀利、客观，拒绝空泛的套话。
+
+        5. "resume_summary": (纯文本) **简历专用摘要**。
+           - **字数要求**：120-150字。
+           - **内容要求**：高度概括，适合放在简历 Header 部分的自我介绍。不要使用 Markdown 标题。
+
+        6. "repositories": [
             {{
                 "name": "仓库名",
                 "status": "Active" | "Maintenance" | "Deprecated",
-                "ai_summary": "一句话**中文**简介"
+                "ai_summary": "一句话中文简介"
             }}
         ]
 
@@ -79,7 +97,8 @@ class LLMAnalysisService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0.2,
+            # 稍微调高温度以生成更丰富的长文本
+            "temperature": 0.4,
             "max_tokens": 16000,
             "response_format": {"type": "json_object"}
         }
@@ -109,6 +128,12 @@ class LLMAnalysisService:
                                                   "tech_breadth"]}
             if 'overall_score' not in parsed_result: parsed_result['overall_score'] = 60
 
+            # [新增] 确保 resume_summary 存在，如果 AI 未生成则截取 summary
+            if 'resume_summary' not in parsed_result:
+                raw_summary = parsed_result.get('summary', '')
+                clean_text = raw_summary.replace('#', '').replace('*', '')
+                parsed_result['resume_summary'] = clean_text[:150] + "..."
+
             return parsed_result
 
         except json.JSONDecodeError as e:
@@ -125,7 +150,7 @@ class LLMAnalysisService:
         要求 AI 输出数值型数据，用于前端渲染图表。
         """
         api_key = os.environ.get('MOONSHOT_API_KEY')
-        base_url = os.environ.get('MOONSHOT_BASE_URL', "https://api.moonshot.cn/v1")
+        base_url = os.environ.get('MOONSHOT_BASE_URL', "[https://api.moonshot.cn/v1](https://api.moonshot.cn/v1)")
 
         if not api_key:
             return {"error": "未配置 API KEY"}
@@ -295,5 +320,6 @@ class LLMAnalysisService:
         except Exception as e:
             print(f"Battle Analysis AI Error: {e}")
             return "🎤 滋...滋... 现场信号受到太阳黑子干扰，解说员暂时失联！请观众朋友们直接看大屏幕上的数据对比！"
+
 
 llm_service = LLMAnalysisService()
