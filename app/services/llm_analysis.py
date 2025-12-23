@@ -11,16 +11,17 @@ class LLMAnalysisService:
     AI 分析服务：负责调用 Kimi 大模型并清洗数据
     """
 
+    def __init__(self):
+        self.api_key = os.environ.get('MOONSHOT_API_KEY')
+        self.base_url = os.environ.get('MOONSHOT_BASE_URL', "https://api.moonshot.cn/v1")
+
     def analyze_github_user(self, username: str, profile_data: dict, detailed_repos_data: list,
                             simple_repos_data: list) -> dict:
         """
         调用 LLM 对用户进行全方位分析。
         """
-        # 直接从环境变量读取
-        api_key = os.environ.get('MOONSHOT_API_KEY')
-        base_url = os.environ.get('MOONSHOT_BASE_URL', "https://api.moonshot.cn/v1")
 
-        if not api_key:
+        if not self.api_key:
             return {"error": "后端未配置 MOONSHOT_API_KEY"}
 
         current_date = datetime.now().strftime("%Y-%m-%d")
@@ -86,7 +87,7 @@ class LLMAnalysisService:
         """
 
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
 
@@ -105,7 +106,7 @@ class LLMAnalysisService:
 
         try:
             print(f"--- [AI] 正在请求 Kimi 深度分析 {username}... ---")
-            response = requests.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=180)
+            response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=180)
             response.raise_for_status()
 
             result = response.json()
@@ -149,10 +150,8 @@ class LLMAnalysisService:
         [任务 4 - 升级版] 针对单个仓库进行可视化数据分析。
         要求 AI 输出数值型数据，用于前端渲染图表。
         """
-        api_key = os.environ.get('MOONSHOT_API_KEY')
-        base_url = os.environ.get('MOONSHOT_BASE_URL', "[https://api.moonshot.cn/v1](https://api.moonshot.cn/v1)")
 
-        if not api_key:
+        if not self.api_key:
             return {"error": "未配置 API KEY"}
 
         safe_readme = readme_content[:8000] + "..." if len(readme_content) > 8000 else readme_content
@@ -174,11 +173,11 @@ class LLMAnalysisService:
             "summary": "一句话超简短总结 (30字以内)",
             "overall_score": 85,
             "radar_data": {
-                "functionality": 80,  // 功能完备性
-                "code_quality": 90,   // 代码规范度
-                "documentation": 70,  // 文档质量
-                "influence": 60,      // 社区影响力
-                "innovation": 85      // 技术创新性
+                "functionality": 80,
+                "code_quality": 90,
+                "documentation": 70,
+                "influence": 60, 
+                "innovation": 85
             },
             "scenarios": [
                 {"name": "微服务架构", "score": 95},
@@ -200,7 +199,7 @@ class LLMAnalysisService:
         """
 
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
         payload = {
@@ -214,7 +213,7 @@ class LLMAnalysisService:
         }
 
         try:
-            response = requests.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=60)
+            response = requests.post(f"{self.base_url}/chat/completions", headers=headers, json=payload, timeout=60)
             response.raise_for_status()
 
             content = response.json()['choices'][0]['message']['content']
@@ -226,100 +225,287 @@ class LLMAnalysisService:
         except Exception as e:
             print(f"Repo Analysis Error: {e}")
             return {"error": str(e)}
-    
+
     def analyze_battle(self, player1_data: dict, player2_data: dict) -> str:
         """
-        对战解说功能
-        接收两名选手的完整数据，调用 AI 生成激情解说词。
+        核心对战解说生成方法
+
+        Args:
+            player1_data: 红方选手数据（包含 GitHub 和平台数据）
+            player2_data: 蓝方选手数据（包含 GitHub 和平台数据）
+
+        Returns:
+            str: AI 生成的解说文本
         """
-        # 0. 检查 API Key
-        api_key = os.environ.get('MOONSHOT_API_KEY')
-        base_url = os.environ.get('MOONSHOT_BASE_URL', "https://api.moonshot.cn/v1")
-        
-        if not api_key:
-            return "解说员正在休息（后端未配置 API Key），请自行根据雷达图判断胜负！"
 
-        # 1. 智能判定对战类型，用于指导 AI 的解说侧重点
-        # 即使两边都没注册 (is_member=False)，这里也能处理
-        p1_is_member = player1_data['internal_data'].get('is_member', False)
-        p2_is_member = player2_data['internal_data'].get('is_member', False)
+        # 1. 检查 API 配置
+        if not self.api_key:
+            return self._generate_fallback_commentary(player1_data, player2_data)
 
-        battle_context = ""
-        if p1_is_member and p2_is_member:
-            battle_context = "【场景】：这是一场平台内部的‘巅峰内战’。请重点对比两人的心愿完成度（梦想）和 GitHub 技术实力（现实）。"
-        elif not p1_is_member and not p2_is_member:
-            battle_context = "【场景】：这是一场‘野生大神遭遇战’。两位选手均未入驻本平台（心愿数据均为0）。请完全忽略心愿数据，**专注于 GitHub 数据的硬核技术对比**（仓库、粉丝、活跃度、Star数）。不要嘲讽他们没有心愿，要赞叹他们的技术。"
+        # 2. 智能判定对战场景
+        battle_scene = self._identify_battle_scene(player1_data, player2_data)
+
+        # 3. 构建精心设计的提示词
+        system_prompt = self._build_system_prompt(battle_scene)
+        user_prompt = self._build_user_prompt(player1_data, player2_data, battle_scene)
+
+        # 4. 调用 AI API
+        try:
+            commentary = self._call_moonshot_api(system_prompt, user_prompt)
+            return commentary
+        except Exception as e:
+            print(f"[AI Error] {e}")
+            return self._generate_fallback_commentary(player1_data, player2_data)
+
+    def _identify_battle_scene(self, p1: dict, p2: dict) -> str:
+        """
+        智能识别对战场景类型
+        返回: 'internal_war' | 'external_war' | 'mixed_battle'
+        """
+        p1_member = p1.get('internal_data', {}).get('is_member', False)
+        p2_member = p2.get('internal_data', {}).get('is_member', False)
+
+        if p1_member and p2_member:
+            return 'internal_war'  # 平台内战
+        elif not p1_member and not p2_member:
+            return 'external_war'  # 野生大神对决
         else:
-            battle_context = "【场景】：这是一场‘踢馆赛’（会员 VS 路人）。请幽默地调侃路人选手虽然技术可能很强，但因为没有许愿单而显得‘缺乏生活情趣’或‘没有梦想’，突显会员的主场优势。"
+            return 'mixed_battle'  # 踢馆赛
 
-        # 2. 构造 System Prompt (人设与规则)
-        system_prompt = f"""
-        你是一名《代码竞技场》的金牌解说员，风格幽默、犀利、充满激情（类似电竞解说）。
-        你的任务是根据两名程序员的【GitHub数据】和【本平台许愿数据】进行 1v1 对比分析。
-        
-        {battle_context}
-        
-        【输出要求】
-        - 不需要输出 JSON，直接输出一段**纯文本**解说词。
-        - 字数严格控制在 **150字 - 200字** 之间。
-        - 必须包含一个明确的**“胜负判定”**或**“风格评价”**。
-        - 适当使用 Emoji 🎤 ⚔️ 🏆 🔥。
+    def _build_system_prompt(self, battle_scene: str) -> str:
+        """
+        根据对战场景构建系统提示词
         """
 
-        # 3. 构造 User Prompt (格式化数据喂给 AI)
-        def format_player_info(p_data):
-            gh = p_data['github_data']
-            internal = p_data['internal_data']
-            
+        # 基础人设
+        base_persona = """你是《代码竞技场》的金牌解说员，风格幽默风趣、充满激情。
+你精通各种编程语言和技术栈，能够从 GitHub 数据中洞察程序员的真实实力。
+你的解说要像电竞解说员一样热血沸腾，但也要保持专业和客观。"""
+
+        # 根据场景调整解说策略
+        scene_strategies = {
+            'internal_war': """
+【场景】：这是一场平台内部的"巅峰内战"！
+【解说重点】：
+- 对比双方的 GitHub 技术实力（仓库、Star、活跃度）
+- 强调平台数据的差异（心愿数、积分）
+- 分析谁更有"梦想驱动力"vs"技术硬实力"
+- 营造势均力敌、精彩纷呈的氛围
+""",
+            'external_war': """
+【场景】：这是一场"野生大神遭遇战"！
+【解说重点】：
+- 完全聚焦于 GitHub 数据的硬核技术对比
+- 不要提及"没有心愿"这件事（避免负面）
+- 强调双方都是技术高手，在开源社区叱咤风云
+- 用技术指标（仓库质量、Star数、提交频率）判断胜负
+- 语气要尊重这些"隐世高人"
+""",
+            'mixed_battle': """
+【场景】：这是一场"踢馆赛"（会员 VS 路人）！
+【解说重点】：
+- 幽默调侃路人选手"虽强但缺乏梦想"
+- 突出会员的主场优势（有心愿、有积分、有归属感）
+- 同时尊重路人的技术实力
+- 制造戏剧冲突：技术 vs 梦想，哪个更重要？
+- 鼓励路人加入平台，一起追逐梦想
+"""
+        }
+
+        scene_strategy = scene_strategies.get(battle_scene, scene_strategies['internal_war'])
+
+        # 输出规范
+        output_rules = """
+【输出规范】
+1. **格式**：纯文本，不使用 Markdown 或特殊符号
+2. **字数**：严格控制在 180-220 字之间
+3. **结构**：
+   - 开场白（20字）：点燃激情
+   - 数据对比（80字）：分析双方实力
+   - 胜负判定（60字）：给出明确结论或趋势分析
+   - 结语（20字）：鼓励和展望
+4. **语气**：热血、幽默、专业，适当使用 Emoji
+5. **必须包含**：至少 2 个具体的数据对比
+6. **禁止**：
+   - 过度贬低任何一方
+   - 使用刻板印象或歧视性语言
+   - 冗长废话和重复表述
+   - 超过 220 字
+"""
+
+        return f"{base_persona}\n\n{scene_strategy}\n\n{output_rules}"
+
+    def _build_user_prompt(self, p1: dict, p2: dict, scene: str) -> str:
+        """
+        构建用户提示词，格式化选手数据
+        """
+
+        def format_player(p: dict, side: str) -> str:
+            """格式化单个选手信息"""
+            gh = p.get('github_data', {})
+            internal = p.get('internal_data', {})
+
             # 基础信息
-            info = f"选手: {p_data['username']}\n"
-            info += f"   - GitHub: {gh.get('repos', 0)} 仓库, {gh.get('followers', 0)} 粉丝, {gh.get('stars', 0)} Stars, 本周提交 {gh.get('commits_weekly', 0)} 次\n"
-            
-            # 平台信息
+            info = f"【{side}】{p.get('username', 'Unknown')} ({p.get('rank', '战士')} {p.get('rank_emoji', '')})\n"
+
+            # GitHub 数据
+            info += f"GitHub实力：\n"
+            info += f"  - 仓库数: {gh.get('repos', 0)} 个\n"
+            info += f"  - 粉丝数: {gh.get('followers', 0)} 人\n"
+            info += f"  - 获赞数: {gh.get('stars', 0)} Stars\n"
+            info += f"  - 周活跃: {gh.get('commits_weekly', 0)} 次提交\n"
+
+            # 平台数据
             if internal.get('is_member'):
-                info += f"   - 平台战力: 认证会员 (心愿数: {internal.get('wishes_count')}, 积分: {internal.get('score')})\n"
+                info += f"平台数据：\n"
+                info += f"  - 身份: 🏅 认证会员\n"
+                info += f"  - 心愿数: {internal.get('wishes_count', 0)} 个\n"
+                info += f"  - 积分: {internal.get('score', 0)} 点\n"
             else:
-                info += f"   - 平台战力: 路人 (无本平台记录)\n"
-            
+                info += f"平台数据：\n"
+                info += f"  - 身份: 👻 野生路人（未注册）\n"
+
+            # 特长标签
+            if p.get('strengths'):
+                info += f"特长: {', '.join(p.get('strengths', []))}\n"
+
+            # 综合战力
+            info += f"综合战力: {p.get('power_score', 0)} 点\n"
+
             return info
 
-        user_prompt = f"""
-        【红方选手】
-        {format_player_info(player1_data)}
+        # 格式化双方数据
+        p1_info = format_player(p1, "红方选手")
+        p2_info = format_player(p2, "蓝方选手")
 
-        【蓝方选手】
-        {format_player_info(player2_data)}
+        # 添加对战场景说明
+        scene_hints = {
+            'internal_war': "这是平台内部的会员对决，请重点对比他们的梦想（心愿）和技术（GitHub）数据。",
+            'external_war': "双方都是野生高手，请完全基于 GitHub 技术数据进行对比，不要提及心愿。",
+            'mixed_battle': "会员 vs 路人的踢馆赛，请对比技术实力与平台归属感的差异。"
+        }
 
-        请开始你的解说！
+        hint = scene_hints.get(scene, "")
+
+        return f"""
+{p1_info}
+
+VS
+
+{p2_info}
+
+【对战提示】
+{hint}
+
+请生成一段精彩的解说词（180-220字，纯文本）：
+"""
+
+    def _call_moonshot_api(self, system_prompt: str, user_prompt: str) -> str:
         """
-
-        # 4. 调用大模型
+        调用 Moonshot AI API
+        """
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+
         payload = {
-            "model": "moonshot-v1-32k",
+            "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 0.7, # 稍微调高温度，让解说更生动
+            "temperature": 0.8,  # 提高创造力
+            "max_tokens": 1000,
+            "top_p": 0.9
         }
 
         try:
-            # 这里的 timeout 设置为 60 秒，防止 AI 思考过久
-            response = requests.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=60)
+            print(f"[AI] 正在生成对战解说...")
+            response = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
             response.raise_for_status()
-            
+
             result = response.json()
-            content = result['choices'][0]['message']['content']
-            
+            content = result['choices'][0]['message']['content'].strip()
+
+            # 清理可能的 Markdown 格式
+            content = re.sub(r'```.*?```', '', content, flags=re.DOTALL)
+            content = re.sub(r'[#*_`]', '', content)
+
+            print(f"[AI] 解说生成成功，长度: {len(content)} 字")
             return content
 
-        except Exception as e:
-            print(f"Battle Analysis AI Error: {e}")
-            return "🎤 滋...滋... 现场信号受到太阳黑子干扰，解说员暂时失联！请观众朋友们直接看大屏幕上的数据对比！"
+        except requests.exceptions.Timeout:
+            print("[AI] 请求超时")
+            raise Exception("AI 响应超时")
+        except requests.exceptions.RequestException as e:
+            print(f"[AI] 网络请求失败: {e}")
+            raise Exception(f"网络错误: {str(e)}")
+        except KeyError:
+            print("[AI] API 返回格式错误")
+            raise Exception("API 返回格式异常")
+
+    def _generate_fallback_commentary(self, p1: dict, p2: dict) -> str:
+        """
+        AI 不可用时的备用解说生成
+        使用规则引擎生成基础解说
+        """
+        p1_name = p1.get('username', 'Player1')
+        p2_name = p2.get('username', 'Player2')
+        p1_score = p1.get('power_score', 0)
+        p2_score = p2.get('power_score', 0)
+        p1_rank = p1.get('rank', '战士')
+        p2_rank = p2.get('rank', '战士')
+
+        p1_gh = p1.get('github_data', {})
+        p2_gh = p2.get('github_data', {})
+
+        # 判断优势方
+        if p1_score > p2_score:
+            leader = p1_name
+            leader_rank = p1_rank
+            follower = p2_name
+            gap = p1_score - p2_score
+            gap_percent = round((gap / p2_score * 100)) if p2_score > 0 else 100
+        else:
+            leader = p2_name
+            leader_rank = p2_rank
+            follower = p1_name
+            gap = p2_score - p1_score
+            gap_percent = round((gap / p1_score * 100)) if p1_score > 0 else 100
+
+        # 找出关键差距
+        repo_diff = abs(p1_gh.get('repos', 0) - p2_gh.get('repos', 0))
+        star_diff = abs(p1_gh.get('stars', 0) - p2_gh.get('stars', 0))
+        commit_diff = abs(p1_gh.get('commits_weekly', 0) - p2_gh.get('commits_weekly', 0))
+
+        # 生成解说
+        intro = f"🎮 各位观众，欢迎来到代码竞技场！红方{p1_name}（{p1_rank}）VS 蓝方{p2_name}（{p2_rank}）！"
+
+        # 数据对比
+        if star_diff > 50:
+            comparison = f"从 GitHub 数据来看，双方在Star数上差距明显（相差{star_diff}）！"
+        elif repo_diff > 20:
+            comparison = f"项目数量对比悬殊，一方拥有{repo_diff}个仓库的优势！"
+        elif commit_diff > 10:
+            comparison = f"活跃度天差地别，周提交数相差{commit_diff}次！"
+        else:
+            comparison = f"双方实力接近，数据胶着，这将是一场精彩对决！"
+
+        # 胜负分析
+        if gap_percent > 50:
+            conclusion = f"{leader}展现出碾压级的实力，领先{gap_percent}%！但我们期待{follower}能够奋起直追，创造奇迹！✨"
+        elif gap_percent > 20:
+            conclusion = f"{leader}暂时领先，但{follower}仍有逆转机会！代码世界，一切皆有可能！🚀"
+        else:
+            conclusion = f"势均力敌！{leader}仅以微弱优势领先，这场战斗充满悬念！让我们拭目以待！💪"
+
+        return f"{intro}\n\n{comparison}\n\n{conclusion}"
 
 
 llm_service = LLMAnalysisService()
